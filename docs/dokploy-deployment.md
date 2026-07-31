@@ -39,10 +39,17 @@ Create the domain under the Application:
 | Internal path | Leave empty |
 | Strip path | Off |
 | Container port | `80` |
-| HTTPS | On |
-| Certificate | Let's Encrypt |
+| HTTPS | Off |
+| Certificate | None |
 
-The hostname currently resolves through Cloudflare. If Let's Encrypt cannot issue the origin certificate while the record is proxied, temporarily switch the Cloudflare record to **DNS only**, issue the certificate in Dokploy, and then restore the proxy. Use Cloudflare SSL mode **Full (strict)** after the origin certificate is valid.
+The hostname currently resolves through Cloudflare and the zone uses Flexible SSL. Public browser traffic is HTTPS, while Cloudflare connects to the Dokploy route over HTTP. Enabling HTTPS redirect in Dokploy under this Cloudflare mode causes a redirect loop.
+
+For end-to-end encryption in a future maintenance window:
+
+1. Temporarily switch the Cloudflare record to **DNS only**.
+2. Enable HTTPS and Let's Encrypt for the Dokploy domain.
+3. Change Cloudflare SSL mode to **Full (strict)**.
+4. Restore the Cloudflare proxy.
 
 ## Deployment validation
 
