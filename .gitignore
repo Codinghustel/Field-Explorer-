@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+*.local
+*.log
+auto-imports.d.ts
+components.d.ts
+.b24ui-nuxt/
