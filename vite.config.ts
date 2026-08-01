@@ -8,7 +8,9 @@ export default defineConfig({
     vue(),
     bitrix24UIPluginVite({
       router: false,
-      prose: false
+      prose: false,
+      colorModeInitialValue: 'light',
+      colorModeStorageKey: null
     })
   ],
   resolve: {

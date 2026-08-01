@@ -2,14 +2,19 @@
 import { computed, nextTick, onMounted, ref } from 'vue'
 import CrmSearchIcon from '@bitrix24/b24icons-vue/crm/CrmSearchIcon'
 import DealIcon from '@bitrix24/b24icons-vue/crm/DealIcon'
+import ActivityIcon from '@bitrix24/b24icons-vue/outline/ActivityIcon'
+import ArrowRightLIcon from '@bitrix24/b24icons-vue/outline/ArrowRightLIcon'
 import CopyIcon from '@bitrix24/b24icons-vue/outline/CopyIcon'
+import DatabaseIcon from '@bitrix24/b24icons-vue/outline/DatabaseIcon'
 import DownloadIcon from '@bitrix24/b24icons-vue/outline/DownloadIcon'
 import InfoCircleIcon from '@bitrix24/b24icons-vue/outline/InfoCircleIcon'
+import ProductIcon from '@bitrix24/b24icons-vue/outline/ProductIcon'
 import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
 import SettingsIcon from '@bitrix24/b24icons-vue/outline/SettingsIcon'
-import { useToast } from '@bitrix24/b24ui-nuxt/composables'
+import { useColorMode, useToast } from '@bitrix24/b24ui-nuxt/composables'
+import type { Component } from 'vue'
 import type { FieldRow, EntityContext, EntityOption, ExplorerData } from '@/types'
-import { CORE_ENTITIES } from '@/types'
+import { CORE_ENTITIES, EXTENDED_ENTITIES } from '@/types'
 import { createFieldsCsv, csvFilename, downloadCsv } from '@/lib/csv'
 import {
   BitrixError,
@@ -22,16 +27,19 @@ import {
   loadExplorer
 } from '@/services/bitrix'
 
-type LoadState = 'initializing' | 'ready' | 'loading' | 'error'
+type LoadState = 'initializing' | 'standalone' | 'ready' | 'loading' | 'error'
 type SourceFilter = 'all' | 'custom' | 'system'
 type ValueFilter = 'all' | 'populated' | 'empty'
 type SortMode = 'custom-first' | 'label' | 'code' | 'type'
 
 const toast = useToast()
+const colorMode = useColorMode()
+colorMode.preference = 'light'
+
 const state = ref<LoadState>('initializing')
 const errorMessage = ref('')
 const explorer = ref<ExplorerData | null>(null)
-const entities = ref<EntityOption[]>([...CORE_ENTITIES])
+const entities = ref<EntityOption[]>([...CORE_ENTITIES, ...EXTENDED_ENTITIES])
 const selectedEntityKey = ref('crm-deal')
 const lookupId = ref<number | undefined>()
 const search = ref('')
@@ -44,38 +52,57 @@ const selectedField = ref<FieldRow | null>(null)
 const installing = ref(false)
 const installed = ref<boolean | null>(null)
 
-const sourceItems = [
+const sourceItems: Array<{ label: string; value: SourceFilter }> = [
   { label: 'All fields', value: 'all' },
-  { label: 'Custom fields', value: 'custom' },
-  { label: 'System fields', value: 'system' }
+  { label: 'Custom', value: 'custom' },
+  { label: 'System', value: 'system' }
 ]
 const valueItems = [
   { label: 'Any value', value: 'all' },
-  { label: 'Populated', value: 'populated' },
+  { label: 'With a value', value: 'populated' },
   { label: 'Empty', value: 'empty' }
 ]
 const sortItems = [
-  { label: 'Custom fields first', value: 'custom-first' },
+  { label: 'Custom first', value: 'custom-first' },
   { label: 'Label A-Z', value: 'label' },
-  { label: 'Field code A-Z', value: 'code' },
-  { label: 'Field type A-Z', value: 'type' }
+  { label: 'API code A-Z', value: 'code' },
+  { label: 'Type A-Z', value: 'type' }
 ]
 
-const entityItems = computed(() => entities.value.map((entity) => ({
-  label: `${entity.group} / ${entity.dynamic ? `${entity.label} (Smart process)` : entity.label}`,
-  value: entity.key
-})))
+const groupedEntities = computed(() => [
+  {
+    group: 'CRM' as const,
+    title: 'CRM records',
+    description: 'Customer and sales records',
+    icon: DealIcon,
+    items: entities.value.filter((entity) => entity.group === 'CRM')
+  },
+  {
+    group: 'Catalog' as const,
+    title: 'Product catalog',
+    description: 'Products, parents, and variations',
+    icon: ProductIcon,
+    items: entities.value.filter((entity) => entity.group === 'Catalog')
+  },
+  {
+    group: 'Inventory' as const,
+    title: 'Inventory',
+    description: 'Warehouses and stock documents',
+    icon: DatabaseIcon,
+    items: entities.value.filter((entity) => entity.group === 'Inventory')
+  }
+])
 
 const selectedEntity = computed(() => entities.value.find((entity) => entity.key === selectedEntityKey.value))
 const lookupHelp = computed(() => {
   switch (selectedEntity.value?.source) {
-    case 'activity': return 'Use the activity ID, not the owning deal or contact ID.'
-    case 'catalog-product': return 'Use the catalog product ID, not a CRM product-row ID.'
-    case 'catalog-sku': return 'Use the parent product ID for a product that has variations.'
-    case 'catalog-offer': return 'Use the sellable variation or offer ID.'
-    case 'catalog-store': return 'Use the warehouse or store ID.'
-    case 'inventory-document': return 'Use the inventory document ID. Inventory Management must be enabled.'
-    default: return 'Use the numeric ID from the CRM record URL.'
+    case 'activity': return 'Enter the activity ID, not the deal or contact ID.'
+    case 'catalog-product': return 'Enter the catalog product ID, not a CRM product-row ID.'
+    case 'catalog-sku': return 'Enter the parent product ID.'
+    case 'catalog-offer': return 'Enter the variation or offer ID.'
+    case 'catalog-store': return 'Enter the warehouse ID.'
+    case 'inventory-document': return 'Enter the inventory document ID.'
+    default: return 'The record ID is the number shown in its Bitrix24 URL.'
   }
 })
 
@@ -110,23 +137,29 @@ const stats = computed(() => {
   return {
     total: fields.length,
     custom: fields.filter((field) => field.custom).length,
-    populated: fields.filter((field) => field.populated).length,
-    required: fields.filter((field) => field.required).length
+    populated: fields.filter((field) => field.populated).length
   }
 })
 
 const columns = [
-  { accessorKey: 'code', header: 'Field code', meta: { class: { th: 'min-w-[220px]', td: 'field-code-cell' } } },
-  { accessorKey: 'label', header: 'Field label', meta: { class: { th: 'min-w-[180px]' } } },
+  { accessorKey: 'label', header: 'Field', meta: { class: { th: 'min-w-[240px]' } } },
+  { accessorKey: 'code', header: 'API code', meta: { class: { th: 'min-w-[210px]' } } },
   { accessorKey: 'type', header: 'Type' },
-  { accessorKey: 'flags', header: 'Properties', enableSorting: false },
-  { accessorKey: 'displayValue', header: 'Current value', meta: { class: { th: 'min-w-[240px]', td: 'max-w-[420px]' } } },
+  { accessorKey: 'displayValue', header: 'Current value', meta: { class: { th: 'min-w-[250px]', td: 'max-w-[430px]' } } },
+  { accessorKey: 'flags', header: 'Attributes', enableSorting: false },
   { accessorKey: 'actions', header: '', enableSorting: false, meta: { class: { th: 'w-12', td: 'w-12' } } }
 ]
 
+function entityIcon(entity: EntityOption): Component {
+  if (entity.source === 'activity') return ActivityIcon
+  if (entity.group === 'Catalog') return ProductIcon
+  if (entity.group === 'Inventory') return DatabaseIcon
+  return DealIcon
+}
+
 function asMessage(error: unknown): string {
   if (error instanceof BitrixError && error.code === 'ACCESS_DENIED') {
-    return "Bitrix24 denied access to this CRM record. Check the user's CRM permissions and the app's CRM scope."
+    return "Bitrix24 denied access. Check this user's record permissions and the app scopes."
   }
   return error instanceof Error ? error.message : 'Bitrix24 could not load this record.'
 }
@@ -136,6 +169,7 @@ async function openContext(context: EntityContext): Promise<void> {
   errorMessage.value = ''
   try {
     explorer.value = await loadExplorer(context)
+    resetFilters()
     state.value = 'ready'
     await resizeFrame()
   } catch (error) {
@@ -149,9 +183,27 @@ async function lookup(): Promise<void> {
     toast.add({ title: 'Enter a valid record ID', description: 'Record IDs are positive numbers.', color: 'air-primary-alert' })
     return
   }
-  const entity = entities.value.find((option) => option.key === selectedEntityKey.value)
+  const entity = selectedEntity.value
   if (!entity) return
   await openContext({ ...entity, id: lookupId.value })
+}
+
+function returnToPicker(): void {
+  explorer.value = null
+  state.value = 'ready'
+  resetFilters()
+}
+
+function resetFilters(): void {
+  search.value = ''
+  sourceFilter.value = 'all'
+  valueFilter.value = 'all'
+  typeFilter.value = 'all'
+  sortMode.value = 'custom-first'
+}
+
+function setSourceFilter(value: SourceFilter): void {
+  sourceFilter.value = value
 }
 
 async function refresh(): Promise<void> {
@@ -170,11 +222,10 @@ async function copyText(value: string, label: string): Promise<void> {
 
 function exportVisible(): void {
   if (!explorer.value || !filteredFields.value.length) return
-  const csv = createFieldsCsv(filteredFields.value, explorer.value.context)
-  downloadCsv(csv, csvFilename(explorer.value.context))
+  downloadCsv(createFieldsCsv(filteredFields.value, explorer.value.context), csvFilename(explorer.value.context))
   toast.add({
     title: 'CSV exported',
-    description: `${filteredFields.value.length} field${filteredFields.value.length === 1 ? '' : 's'} included from the current view.`,
+    description: `${filteredFields.value.length} visible field${filteredFields.value.length === 1 ? '' : 's'} included.`,
     color: 'air-primary-success'
   })
 }
@@ -182,13 +233,12 @@ function exportVisible(): void {
 async function registerTabs(): Promise<void> {
   installing.value = true
   try {
-    const handler = `${window.location.origin}${window.location.pathname}`
-    const count = await installApplication(handler)
-    toast.add({ title: 'CRM tabs registered', description: `${count} available detail tabs now open Field Explorer.`, color: 'air-primary-success' })
+    const count = await installApplication(`${window.location.origin}${window.location.pathname}`)
+    toast.add({ title: 'CRM tabs are ready', description: `${count} available placements registered.`, color: 'air-primary-success' })
     if (installed.value === false) finishInstallation()
     installed.value = true
   } catch (error) {
-    toast.add({ title: 'Tab registration failed', description: asMessage(error), color: 'air-primary-alert' })
+    toast.add({ title: 'Could not register tabs', description: asMessage(error), color: 'air-primary-alert' })
   } finally {
     installing.value = false
   }
@@ -199,7 +249,62 @@ async function resizeFrame(): Promise<void> {
   window.BX24?.resizeWindow?.('100%', Math.max(document.documentElement.scrollHeight, 720))
 }
 
+function demoField(partial: Partial<FieldRow> & Pick<FieldRow, 'code' | 'label' | 'type'>): FieldRow {
+  const value = partial.value ?? ''
+  const rawValue = partial.rawValue ?? String(value)
+  return {
+    upperName: partial.code,
+    value,
+    displayValue: rawValue,
+    rawValue,
+    custom: false,
+    populated: rawValue.length > 0,
+    required: false,
+    multiple: false,
+    readOnly: false,
+    immutable: false,
+    deprecated: false,
+    settings: {},
+    ...partial
+  }
+}
+
+function loadPreview(): void {
+  explorer.value = {
+    context: { ...CORE_ENTITIES[0]!, id: 1842 },
+    title: 'Website redesign / Northwind',
+    fields: [
+      demoField({ code: 'UF_CRM_CLIENT_REFERENCE', label: 'Client reference', type: 'string', value: 'NW-2026-104', rawValue: 'NW-2026-104', custom: true, populated: true }),
+      demoField({ code: 'UF_CRM_PROJECT_SCOPE', label: 'Project scope', type: 'enumeration', value: ['Design', 'Development'], rawValue: '["Design", "Development"]', custom: true, populated: true, multiple: true }),
+      demoField({ code: 'UF_CRM_APPROVAL_DATE', label: 'Approval date', type: 'date', value: '2026-08-14', rawValue: '2026-08-14', custom: true, populated: true }),
+      demoField({ code: 'UF_CRM_PURCHASE_ORDER', label: 'Purchase order', type: 'file', custom: true }),
+      demoField({ code: 'TITLE', label: 'Deal name', type: 'string', value: 'Website redesign / Northwind', rawValue: 'Website redesign / Northwind', populated: true, required: true }),
+      demoField({ code: 'STAGE_ID', label: 'Stage', type: 'crm_status', value: 'Proposal sent', rawValue: 'Proposal sent', populated: true, required: true }),
+      demoField({ code: 'OPPORTUNITY', label: 'Amount', type: 'double', value: '18500.00', rawValue: '18500.00', populated: true }),
+      demoField({ code: 'CURRENCY_ID', label: 'Currency', type: 'string', value: 'USD', rawValue: 'USD', populated: true }),
+      demoField({ code: 'ASSIGNED_BY_ID', label: 'Responsible person', type: 'user', value: '47', rawValue: '47', populated: true }),
+      demoField({ code: 'COMMENTS', label: 'Comments', type: 'string' })
+    ]
+  }
+  state.value = 'ready'
+}
+
 onMounted(async () => {
+  document.documentElement.classList.remove('dark', 'edge-dark', 'auto', 'base-mode')
+  document.documentElement.classList.add('light')
+
+  const preview = new URLSearchParams(window.location.search).get('preview')
+  if (preview) {
+    if (preview === 'picker') state.value = 'ready'
+    else loadPreview()
+    return
+  }
+
+  if (!window.BX24) {
+    state.value = 'standalone'
+    return
+  }
+
   try {
     await initializeBitrix()
     const context = getPlacementContext()
@@ -228,241 +333,244 @@ onMounted(async () => {
 
 <template>
   <B24App>
-    <main class="app-shell">
-      <section class="explorer-frame">
-        <header class="app-header">
-          <div class="brand-lockup">
-            <div class="brand-mark" aria-hidden="true">
-              <span>UF</span>
-            </div>
-            <div>
-              <div class="eyebrow">CRM schema workbench</div>
-              <h1>Field Explorer</h1>
-            </div>
-          </div>
-          <div class="header-actions">
-            <B24Tooltip text="Reload schema and values">
-              <B24Button
-                v-if="explorer"
-                :icon="RefreshIcon"
-                color="air-tertiary-no-accent"
-                aria-label="Refresh fields"
-                :loading="state === 'loading'"
-                @click="refresh"
-              />
-            </B24Tooltip>
-            <B24Button
-              :icon="SettingsIcon"
-              color="air-secondary-no-accent"
-              :loading="installing"
-              label="Register CRM tabs"
-              @click="registerTabs"
-            />
-          </div>
-        </header>
-
-        <div v-if="state === 'initializing'" class="state-panel" aria-live="polite">
-          <div class="state-heading">
-            <B24Skeleton class="h-9 w-56" />
-            <B24Skeleton class="h-5 w-80 max-w-full" />
-          </div>
-          <div class="skeleton-grid">
-            <B24Skeleton v-for="index in 12" :key="index" class="h-12" />
+    <div class="app-root">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-icon"><CrmSearchIcon /></div>
+          <div>
+            <h1>Field Explorer</h1>
+            <p>Bitrix24 record fields and API codes</p>
           </div>
         </div>
 
-        <div v-else-if="state === 'error' && !explorer" class="state-panel compact-state">
-          <B24Alert
-            title="Field Explorer could not start"
-            :description="errorMessage"
-            color="air-primary-alert"
-            :icon="InfoCircleIcon"
+        <div class="topbar-actions">
+          <div v-if="explorer" class="desktop-actions">
+            <B24Button :icon="RefreshIcon" label="Refresh" color="air-secondary-no-accent" :loading="state === 'loading'" @click="refresh" />
+            <B24Button :icon="DownloadIcon" label="Export CSV" color="air-primary" :disabled="!filteredFields.length" @click="exportVisible" />
+          </div>
+          <div v-if="explorer" class="mobile-actions">
+            <button type="button" aria-label="Refresh fields" @click="refresh"><RefreshIcon /></button>
+            <button type="button" class="primary" aria-label="Export visible fields as CSV" :disabled="!filteredFields.length" @click="exportVisible"><DownloadIcon /></button>
+          </div>
+          <B24Button
+            v-else-if="state === 'ready'"
+            class="setup-button"
+            :icon="SettingsIcon"
+            label="Set up CRM tabs"
+            color="air-secondary-no-accent"
+            :loading="installing"
+            @click="registerTabs"
           />
         </div>
+      </header>
 
-        <template v-else>
-          <section v-if="!explorer" class="launch-panel">
-            <div class="launch-copy">
-              <B24Badge label="Read-only CRM inspector" color="air-secondary-accent-1" size="sm" />
-              <h2>Find the field behind the label.</h2>
-              <p>
-                Inspect CRM, activity, product catalog, warehouse, and inventory-document fields without
-                leaving Bitrix24. Open a supported placement or look up a record directly.
-              </p>
+      <main class="main-content">
+        <section v-if="state === 'initializing'" class="loading-page" aria-live="polite">
+          <B24Skeleton class="h-8 w-64" />
+          <B24Skeleton class="h-5 w-96 max-w-full" />
+          <div class="loading-panels">
+            <B24Skeleton v-for="index in 3" :key="index" class="h-52" />
+          </div>
+        </section>
+
+        <section v-else-if="state === 'standalone'" class="standalone-page">
+          <div class="standalone-main">
+            <B24Badge label="Deployment ready" color="air-secondary-accent-1" />
+            <h2>Open Field Explorer from Bitrix24</h2>
+            <p>
+              This address hosts the app, but CRM data is only available inside your authorized
+              Bitrix24 portal. Open the local app there to choose a record or inspect a CRM tab.
+            </p>
+            <B24Button
+              to="https://pcicrm.bitrix24.com/marketplace/"
+              target="_blank"
+              label="Open Bitrix24 applications"
+              :trailing-icon="ArrowRightLIcon"
+              color="air-primary"
+              size="lg"
+            />
+          </div>
+          <aside class="standalone-steps">
+            <div class="step-row"><span>1</span><div><strong>Open the local app</strong><p>Launch Field Explorer from Applications.</p></div></div>
+            <div class="step-row"><span>2</span><div><strong>Set up CRM tabs</strong><p>Run setup once as an administrator.</p></div></div>
+            <div class="step-row"><span>3</span><div><strong>Inspect a record</strong><p>Open a CRM tab or enter a record ID.</p></div></div>
+          </aside>
+        </section>
+
+        <section v-else-if="state === 'error' && !explorer" class="error-page">
+          <B24Alert title="Field Explorer could not connect" :description="errorMessage" color="air-primary-alert" :icon="InfoCircleIcon" />
+        </section>
+
+        <section v-else-if="!explorer" class="picker-page">
+          <div class="page-heading">
+            <div>
+              <h2>Choose a record to inspect</h2>
+              <p>Select the Bitrix24 area, then enter the record ID.</p>
             </div>
-            <form class="lookup-form" @submit.prevent="lookup">
-              <div class="lookup-caption">Open a CRM record</div>
-              <B24FormField label="Entity type">
-                <B24Select
-                  v-model="selectedEntityKey"
-                  :items="entityItems"
-                  value-key="value"
-                  class="w-full"
-                  :icon="DealIcon"
-                />
-              </B24FormField>
-              <B24FormField label="Record ID" :help="lookupHelp">
-                <B24Input v-model.number="lookupId" type="number" min="1" placeholder="For example, 123" class="w-full" />
-              </B24FormField>
-              <B24Button type="submit" label="Explore fields" color="air-primary" size="lg" block loading-auto />
-            </form>
-          </section>
+            <B24Badge v-if="installed" label="CRM tabs connected" color="air-secondary-accent-1" size="sm" />
+          </div>
 
-          <template v-else>
-            <section class="record-strip">
-              <div class="record-identity">
-                <div class="record-kicker">{{ explorer.context.label }} / ID {{ explorer.context.id }}</div>
-                <h2>{{ explorer.title }}</h2>
-              </div>
-              <dl class="schema-stats" aria-label="Field summary">
-                <div><dt>Fields</dt><dd>{{ stats.total }}</dd></div>
-                <div><dt>Custom</dt><dd>{{ stats.custom }}</dd></div>
-                <div><dt>Populated</dt><dd>{{ stats.populated }}</dd></div>
-                <div><dt>Required</dt><dd>{{ stats.required }}</dd></div>
-              </dl>
-            </section>
-
-            <section class="workspace">
-              <div class="toolbar">
-                <B24Input
-                  v-model="search"
-                  :icon="CrmSearchIcon"
-                  placeholder="Search label, code, type, or value"
-                  class="search-control"
-                  rounded
-                />
-                <div class="filter-controls">
-                  <B24Select v-model="sourceFilter" :items="sourceItems" value-key="value" class="filter-select" />
-                  <B24Select v-model="valueFilter" :items="valueItems" value-key="value" class="filter-select" />
-                  <B24Select v-model="typeFilter" :items="typeItems" value-key="value" class="filter-select" />
-                  <B24Select v-model="sortMode" :items="sortItems" value-key="value" class="sort-select" />
-                </div>
-                <B24Button
-                  :icon="DownloadIcon"
-                  label="Export CSV"
-                  color="air-primary"
-                  :disabled="!filteredFields.length"
-                  @click="exportVisible"
-                />
-              </div>
-
-              <div class="result-line">
-                <span>{{ filteredFields.length }} of {{ stats.total }} fields</span>
-                <span v-if="search || sourceFilter !== 'all' || valueFilter !== 'all' || typeFilter !== 'all'" class="filter-status">
-                  Current filters apply to CSV export
-                </span>
-              </div>
-
-              <B24Alert
-                v-if="state === 'error'"
-                title="The record could not be refreshed"
-                :description="errorMessage"
-                color="air-primary-alert"
-                class="mb-3"
-              />
-
-              <B24TableWrapper rounded bordered row-hover pin-rows size="sm" class="field-table-wrap">
-                <B24Table
-                  :data="filteredFields"
-                  :columns="columns"
-                  :loading="state === 'loading'"
-                  sticky="header"
-                  empty="No fields match the current filters."
-                  :on-select="(_event: Event, row: { original: FieldRow }) => showDetails(row.original)"
-                  :b24ui="{ root: 'max-h-[620px]', td: 'align-top' }"
+          <div class="source-grid">
+            <section v-for="sourceGroup in groupedEntities" :key="sourceGroup.group" class="source-panel">
+              <header>
+                <div class="source-icon"><Component :is="sourceGroup.icon" /></div>
+                <div><h3>{{ sourceGroup.title }}</h3><p>{{ sourceGroup.description }}</p></div>
+              </header>
+              <div class="source-options">
+                <button
+                  v-for="entity in sourceGroup.items"
+                  :key="entity.key"
+                  type="button"
+                  class="source-option"
+                  :class="{ selected: selectedEntityKey === entity.key }"
+                  @click="selectedEntityKey = entity.key"
                 >
-                  <template #code-cell="{ row }">
-                    <div class="field-code">
-                      <span class="code-pulse" :class="row.original.custom ? 'is-custom' : 'is-system'" />
-                      <div>
-                        <code>{{ row.original.code }}</code>
-                        <span v-if="row.original.upperName !== row.original.code" class="original-code">
-                          {{ row.original.upperName }}
-                        </span>
-                      </div>
-                    </div>
-                  </template>
-                  <template #label-cell="{ row }">
-                    <div class="field-label">{{ row.original.label }}</div>
-                    <div class="field-source">{{ row.original.custom ? 'Custom field' : 'System field' }}</div>
-                  </template>
-                  <template #type-cell="{ row }">
-                    <B24Badge :label="row.original.type" color="air-secondary" size="xs" />
-                  </template>
-                  <template #flags-cell="{ row }">
-                    <div class="flag-list">
-                      <B24Badge v-if="row.original.required" label="Required" color="air-secondary-alert" size="xs" />
-                      <B24Badge v-if="row.original.multiple" label="Multiple" color="air-secondary-accent-2" size="xs" />
-                      <B24Badge v-if="row.original.readOnly" label="Read only" color="air-secondary" size="xs" />
-                      <span v-if="!row.original.required && !row.original.multiple && !row.original.readOnly" class="muted-value">-</span>
-                    </div>
-                  </template>
-                  <template #displayValue-cell="{ row }">
-                    <div v-if="row.original.populated" class="value-preview" :title="row.original.rawValue">
-                      {{ row.original.displayValue }}
-                    </div>
-                    <span v-else class="empty-value">Empty</span>
-                  </template>
-                  <template #actions-cell="{ row }">
-                    <B24Tooltip text="Copy field code">
-                      <B24Button
-                        :icon="CopyIcon"
-                        size="sm"
-                        color="air-tertiary-no-accent"
-                        aria-label="Copy field code"
-                        @click.stop="copyText(row.original.code, 'Field code')"
-                      />
-                    </B24Tooltip>
-                  </template>
-                  <template #empty>
-                    <div class="table-empty">
-                      <CrmSearchIcon class="size-8" />
-                      <strong>No matching fields</strong>
-                      <span>Change the search or filters to widen the current view.</span>
-                    </div>
-                  </template>
-                </B24Table>
-              </B24TableWrapper>
+                  <Component :is="entityIcon(entity)" />
+                  <span>{{ entity.label }}</span>
+                  <span v-if="entity.dynamic" class="option-tag">Smart process</span>
+                </button>
+              </div>
             </section>
-          </template>
-        </template>
-      </section>
-    </main>
+          </div>
 
-    <B24Modal
-      v-model:open="detailsOpen"
-      :title="selectedField?.label || 'Field details'"
-      :description="selectedField?.code"
-      scrollable
-      :b24ui="{ content: 'sm:max-w-[680px]' }"
-    >
+          <form class="lookup-bar" @submit.prevent="lookup">
+            <div class="lookup-selection">
+              <span>Selected record type</span>
+              <strong>{{ selectedEntity?.label }}</strong>
+            </div>
+            <B24FormField label="Record ID" :help="lookupHelp" class="lookup-field">
+              <B24Input v-model.number="lookupId" type="number" min="1" placeholder="Enter ID" size="lg" />
+            </B24FormField>
+            <B24Button type="submit" label="Open record" :trailing-icon="ArrowRightLIcon" color="air-primary" size="lg" loading-auto />
+          </form>
+        </section>
+
+        <section v-else class="explorer-page">
+          <button type="button" class="back-link" @click="returnToPicker">Back to record picker</button>
+
+          <div class="record-header">
+            <div class="record-title">
+              <div class="record-type">{{ explorer.context.label }} <span>ID {{ explorer.context.id }}</span></div>
+              <h2>{{ explorer.title }}</h2>
+            </div>
+            <div class="record-summary">
+              <span><strong>{{ stats.total }}</strong> fields</span>
+              <span><strong>{{ stats.custom }}</strong> custom</span>
+              <span><strong>{{ stats.populated }}</strong> with values</span>
+            </div>
+          </div>
+
+          <div class="filter-workspace">
+            <div class="search-row">
+              <B24Input v-model="search" :icon="CrmSearchIcon" placeholder="Search field name, API code, type, or value" size="lg" class="field-search" rounded />
+              <div class="source-tabs" role="group" aria-label="Field source">
+                <B24Button
+                  v-for="item in sourceItems"
+                  :key="item.value"
+                  :label="item.label"
+                  :active="sourceFilter === item.value"
+                  active-color="air-primary"
+                  color="air-tertiary-no-accent"
+                  size="sm"
+                  @click="setSourceFilter(item.value)"
+                />
+              </div>
+            </div>
+            <div class="secondary-filters">
+              <span class="result-count">Showing {{ filteredFields.length }} of {{ stats.total }}</span>
+              <B24Select v-model="valueFilter" :items="valueItems" value-key="value" class="small-select" size="sm" />
+              <B24Select v-model="typeFilter" :items="typeItems" value-key="value" class="small-select" size="sm" />
+              <B24Select v-model="sortMode" :items="sortItems" value-key="value" class="sort-select" size="sm" />
+            </div>
+          </div>
+
+          <B24Alert v-if="state === 'error'" title="The record could not be refreshed" :description="errorMessage" color="air-primary-alert" class="mb-4" />
+
+          <B24TableWrapper rounded bordered row-hover pin-rows size="md" class="field-table-wrap">
+            <B24Table
+              :data="filteredFields"
+              :columns="columns"
+              :loading="state === 'loading'"
+              sticky="header"
+              empty="No fields match the current filters."
+              :on-select="(_event: Event, row: { original: FieldRow }) => showDetails(row.original)"
+              :b24ui="{ root: 'max-h-[650px]', td: 'align-middle' }"
+            >
+              <template #label-cell="{ row }">
+                <div class="field-name-cell" :class="{ custom: row.original.custom }">
+                  <strong>{{ row.original.label }}</strong>
+                  <span>{{ row.original.custom ? 'Custom field' : 'System field' }}</span>
+                </div>
+              </template>
+              <template #code-cell="{ row }">
+                <button class="code-button" type="button" title="Copy API code" @click.stop="copyText(row.original.code, 'API code')">
+                  <code>{{ row.original.code }}</code><CopyIcon />
+                </button>
+              </template>
+              <template #type-cell="{ row }">
+                <B24Badge :label="row.original.type" color="air-secondary" size="xs" />
+              </template>
+              <template #displayValue-cell="{ row }">
+                <div v-if="row.original.populated" class="value-preview" :title="row.original.rawValue">{{ row.original.displayValue }}</div>
+                <span v-else class="empty-value">No value</span>
+              </template>
+              <template #flags-cell="{ row }">
+                <div class="flag-list">
+                  <B24Badge v-if="row.original.required" label="Required" color="air-secondary-alert" size="xs" />
+                  <B24Badge v-if="row.original.multiple" label="Multiple" color="air-secondary-accent-2" size="xs" />
+                  <B24Badge v-if="row.original.readOnly" label="Read only" color="air-secondary" size="xs" />
+                  <span v-if="!row.original.required && !row.original.multiple && !row.original.readOnly" class="plain-attribute">Standard</span>
+                </div>
+              </template>
+              <template #actions-cell="{ row }">
+                <B24Button label="View" size="xs" color="air-tertiary-accent" @click.stop="showDetails(row.original)" />
+              </template>
+              <template #empty>
+                <div class="table-empty"><CrmSearchIcon /><strong>No matching fields</strong><span>Clear or change the filters above.</span></div>
+              </template>
+            </B24Table>
+          </B24TableWrapper>
+
+          <div class="field-card-list">
+            <article v-for="field in filteredFields" :key="field.code" class="field-card" :class="{ custom: field.custom }">
+              <header>
+                <div><strong>{{ field.label }}</strong><span>{{ field.custom ? 'Custom field' : 'System field' }}</span></div>
+                <B24Badge :label="field.type" color="air-secondary" size="xs" />
+              </header>
+              <button class="mobile-code" type="button" @click="copyText(field.code, 'API code')"><code>{{ field.code }}</code><CopyIcon /></button>
+              <div class="mobile-value" :class="{ empty: !field.populated }">{{ field.populated ? field.displayValue : 'No value' }}</div>
+              <footer>
+                <div class="flag-list">
+                  <B24Badge v-if="field.required" label="Required" color="air-secondary-alert" size="xs" />
+                  <B24Badge v-if="field.multiple" label="Multiple" color="air-secondary-accent-2" size="xs" />
+                  <span v-if="!field.required && !field.multiple" class="plain-attribute">Standard field</span>
+                </div>
+                <B24Button label="Details" size="xs" color="air-tertiary-accent" @click="showDetails(field)" />
+              </footer>
+            </article>
+            <div v-if="!filteredFields.length" class="mobile-empty">No fields match the current filters.</div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <B24Modal v-model:open="detailsOpen" :title="selectedField?.label || 'Field details'" :description="selectedField?.custom ? 'Custom field' : 'System field'" scrollable :b24ui="{ content: 'sm:max-w-[680px]' }">
       <template #body>
         <div v-if="selectedField" class="detail-stack">
           <section class="detail-code-block">
-            <div>
-              <span>REST field code</span>
-              <code>{{ selectedField.code }}</code>
-            </div>
-            <B24Button :icon="CopyIcon" size="sm" color="air-secondary-no-accent" label="Copy" @click="copyText(selectedField.code, 'Field code')" />
+            <div><span>API code</span><code>{{ selectedField.code }}</code></div>
+            <B24Button :icon="CopyIcon" size="sm" color="air-secondary-no-accent" label="Copy code" @click="copyText(selectedField.code, 'API code')" />
           </section>
           <B24DescriptionList :items="[
             { label: 'Original code', description: selectedField.upperName },
-            { label: 'Type', description: selectedField.type },
-            { label: 'Source', description: selectedField.custom ? 'Custom field' : 'System field' },
-            { label: 'Value state', description: selectedField.populated ? 'Populated' : 'Empty' },
+            { label: 'Data type', description: selectedField.type },
+            { label: 'Value', description: selectedField.populated ? 'Populated' : 'Empty' },
             { label: 'Required', description: selectedField.required ? 'Yes' : 'No' },
-            { label: 'Multiple', description: selectedField.multiple ? 'Yes' : 'No' },
-            { label: 'Read only', description: selectedField.readOnly ? 'Yes' : 'No' },
-            { label: 'Immutable', description: selectedField.immutable ? 'Yes' : 'No' }
+            { label: 'Multiple values', description: selectedField.multiple ? 'Yes' : 'No' },
+            { label: 'Read only', description: selectedField.readOnly ? 'Yes' : 'No' }
           ]" />
-          <section>
-            <div class="detail-section-title">Raw value</div>
-            <pre class="raw-panel">{{ selectedField.rawValue || 'No value' }}</pre>
-          </section>
-          <section v-if="Object.keys(selectedField.settings).length">
-            <div class="detail-section-title">Field settings</div>
-            <pre class="raw-panel">{{ JSON.stringify(selectedField.settings, null, 2) }}</pre>
-          </section>
+          <section><div class="detail-section-title">Raw value</div><pre class="raw-panel">{{ selectedField.rawValue || 'No value' }}</pre></section>
+          <section v-if="Object.keys(selectedField.settings).length"><div class="detail-section-title">Field settings</div><pre class="raw-panel">{{ JSON.stringify(selectedField.settings, null, 2) }}</pre></section>
         </div>
       </template>
     </B24Modal>
