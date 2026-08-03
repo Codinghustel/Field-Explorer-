@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { loadExplorer } from './bitrix'
-import type { EntityContext } from '@/types'
+import type { EntityOption } from '@/types'
 
-function context(overrides: Partial<EntityContext>): EntityContext {
+function context(overrides: Partial<EntityOption>): EntityOption {
   return {
-    key: 'crm-deal', source: 'crm', entityTypeId: 2, id: 42, label: 'Deal', group: 'CRM', ...overrides
+    key: 'crm-deal', source: 'crm', entityTypeId: 2, label: 'Deal', group: 'CRM', ...overrides
   }
 }
 
@@ -28,34 +28,32 @@ describe('Bitrix source adapters', () => {
     window.BX24 = undefined
   })
 
-  it('normalizes CRM activity fields and values', async () => {
+  it('normalizes CRM activity fields', async () => {
     mockMethods({
-      'crm.activity.fields': { SUBJECT: { title: 'Subject', type: 'string' } },
-      'crm.activity.get': { SUBJECT: 'Follow up' }
+      'crm.activity.fields': { SUBJECT: { title: 'Subject', type: 'string' } }
     })
     const result = await loadExplorer(context({ key: 'crm-activity', source: 'activity', entityTypeId: undefined, label: 'Activity' }))
-    expect(result.title).toBe('Follow up')
+    expect(result.title).toBe('Activity Fields')
     expect(result.fields[0]?.code).toBe('SUBJECT')
   })
 
   it('loads product metadata for its information block', async () => {
     mockMethods({
-      'catalog.product.get': { product: { id: 77, iblockId: 14, name: 'Desk' } },
+      'catalog.catalog.list': { catalogs: [{ id: 77, iblockId: 14, productIblockId: 0, skuPropertyId: 0 }] },
       'catalog.product.getFieldsByFilter': { product: { name: { name: 'Name', type: 'string' } } }
     })
     const result = await loadExplorer(context({
       key: 'catalog-product', source: 'catalog-product', entityTypeId: undefined, label: 'Simple product', group: 'Catalog'
     }))
-    expect(result.title).toBe('Desk')
+    expect(result.title).toBe('Simple product Fields')
     expect(result.fields[0]?.label).toBe('Name')
   })
 
   it('adds inventory document lines to the schema', async () => {
     mockMethods({
       'catalog.document.mode.status': 'Y',
-      'catalog.document.list': { documents: [{ id: 42, title: 'Stock receipt' }] },
       'catalog.document.getFields': { document: { title: { type: 'string' } } },
-      'catalog.document.element.list': { documentElements: [{ id: 9, docId: 42, elementId: 77, amount: 3 }] }
+      'catalog.document.element.getFields': { documentElement: { id: { type: 'integer' } } }
     })
     const result = await loadExplorer(context({
       key: 'inventory-document', source: 'inventory-document', entityTypeId: undefined,
@@ -63,6 +61,5 @@ describe('Bitrix source adapters', () => {
     }))
     const lines = result.fields.find((field) => field.code === 'documentElements')
     expect(lines?.multiple).toBe(true)
-    expect(lines?.populated).toBe(true)
   })
 })

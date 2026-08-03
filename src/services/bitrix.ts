@@ -1,5 +1,5 @@
-import { CORE_ENTITIES, EXTENDED_ENTITIES, type EntityContext, type EntityOption, type ExplorerData, type FieldMetadata } from '@/types'
-import { getItemTitle, normalizeFields } from '@/lib/fields'
+import { CORE_ENTITIES, EXTENDED_ENTITIES, type EntityOption, type ExplorerData, type FieldMetadata } from '@/types'
+import { normalizeFields } from '@/lib/fields'
 
 const DYNAMIC_PLACEMENT = /^CRM_DYNAMIC_(\d+)_DETAIL_TAB$/
 const ACTIVITY_TIMELINE_PLACEMENT = /_ACTIVITY_TIMELINE_MENU$/
@@ -49,7 +49,7 @@ function positiveInteger(value: unknown): number | null {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null
 }
 
-export function getPlacementContext(): EntityContext | null {
+export function getPlacementContext(): EntityOption | null {
   let info: BitrixPlacementInfo | undefined
   try {
     info = sdk().placement?.info()
@@ -58,21 +58,14 @@ export function getPlacementContext(): EntityContext | null {
   }
 
   const placement = info?.placement || new URLSearchParams(window.location.search).get('PLACEMENT') || ''
-  const options = info?.options || {}
-  const id = positiveInteger(
-    options.ID
-    || options.ASSOCIATED_ENTITY_ID
-    || new URLSearchParams(window.location.search).get('id')
-  )
-  if (!id) return null
 
   if (placement === 'CRM_ACTIVITY_LIST_MENU' || ACTIVITY_TIMELINE_PLACEMENT.test(placement)) {
     const activity = EXTENDED_ENTITIES.find((entity) => entity.source === 'activity')!
-    return { ...activity, id, placement }
+    return { ...activity, placement }
   }
 
   const core = CORE_ENTITIES.find((entity) => entity.placement === placement)
-  if (core) return { ...core, id }
+  if (core) return { ...core }
 
   const dynamicMatch = placement.match(DYNAMIC_PLACEMENT)
   if (dynamicMatch) {
@@ -81,7 +74,6 @@ export function getPlacementContext(): EntityContext | null {
       key: `crm-dynamic-${entityTypeId}`,
       source: 'crm',
       entityTypeId,
-      id,
       label: 'Smart process',
       group: 'CRM',
       placement,
@@ -93,31 +85,26 @@ export function getPlacementContext(): EntityContext | null {
 }
 
 interface ItemFieldsResponse { fields: Record<string, FieldMetadata> }
-interface ItemResponse { item: Record<string, unknown> }
 interface TypeListResponse {
   types: Array<{ entityTypeId: number; title: string }>
 }
 
-export async function loadExplorer(context: EntityContext): Promise<ExplorerData> {
+export async function loadExplorer(context: EntityOption): Promise<ExplorerData> {
   if (context.source === 'activity') return loadActivity(context)
-  if (context.source === 'catalog-product') return loadCatalogRecord(context, 'catalog.product.get', 'catalog.product.getFieldsByFilter', 'product')
-  if (context.source === 'catalog-sku') return loadCatalogRecord(context, 'catalog.product.sku.get', 'catalog.product.sku.getFieldsByFilter', 'sku')
-  if (context.source === 'catalog-offer') return loadCatalogRecord(context, 'catalog.product.offer.get', 'catalog.product.offer.getFieldsByFilter', 'offer')
+  if (context.source === 'catalog-product') return loadCatalogSchema(context, 'catalog.product.getFieldsByFilter', 'product')
+  if (context.source === 'catalog-sku') return loadCatalogSchema(context, 'catalog.product.sku.getFieldsByFilter', 'sku')
+  if (context.source === 'catalog-offer') return loadCatalogSchema(context, 'catalog.product.offer.getFieldsByFilter', 'offer')
   if (context.source === 'catalog-store') return loadStore(context)
   if (context.source === 'inventory-document') return loadInventoryDocument(context)
   if (!context.entityTypeId) throw new BitrixError('The CRM entity type is missing.')
 
   const params = { entityTypeId: context.entityTypeId, useOriginalUfNames: 'Y' }
-  const [fieldData, itemData] = await Promise.all([
-    callMethod<ItemFieldsResponse>('crm.item.fields', params),
-    callMethod<ItemResponse>('crm.item.get', { ...params, id: context.id })
-  ])
+  const fieldData = await callMethod<ItemFieldsResponse>('crm.item.fields', params)
 
-  const fallback = `${context.label} #${context.id}`
   return {
     context,
-    title: getItemTitle(itemData.item, fallback),
-    fields: normalizeFields(fieldData.fields, itemData.item)
+    title: `${context.label} Fields`,
+    fields: normalizeFields(fieldData.fields)
   }
 }
 
@@ -129,70 +116,59 @@ function metadataMap(fields: Record<string, FieldMetadata>): Record<string, Fiel
   }]))
 }
 
-async function loadActivity(context: EntityContext): Promise<ExplorerData> {
-  const [fields, item] = await Promise.all([
-    callMethod<Record<string, FieldMetadata>>('crm.activity.fields'),
-    callMethod<Record<string, unknown>>('crm.activity.get', { id: context.id })
-  ])
-  const subject = typeof item.SUBJECT === 'string' && item.SUBJECT.trim()
-    ? item.SUBJECT.trim()
-    : `Activity #${context.id}`
-  return { context, title: subject, fields: normalizeFields(metadataMap(fields), item) }
+async function loadActivity(context: EntityOption): Promise<ExplorerData> {
+  const fields = await callMethod<Record<string, FieldMetadata>>('crm.activity.fields')
+  return { context, title: 'Activity Fields', fields: normalizeFields(metadataMap(fields)) }
 }
 
-async function loadCatalogRecord(
-  context: EntityContext,
-  getMethod: string,
+async function loadCatalogSchema(
+  context: EntityOption,
   fieldsMethod: string,
   responseKey: 'product' | 'sku' | 'offer'
 ): Promise<ExplorerData> {
-  const recordResponse = await callMethod<Record<string, Record<string, unknown>>>(getMethod, { id: context.id })
-  const item = recordResponse[responseKey]
-  if (!item) throw new BitrixError(`${context.label} #${context.id} was not found.`)
-  const iblockId = positiveInteger(item.iblockId)
-  if (!iblockId) throw new BitrixError('Bitrix24 did not return the product catalog ID.')
+  const { catalogs } = await callMethod<{ catalogs: Array<{ id: number, iblockId: number, productIblockId: number }> }>('catalog.catalog.list')
+  if (!catalogs || catalogs.length === 0) throw new BitrixError('No product catalog found.')
+
+  let iblockId: number
+  if (responseKey === 'offer' || responseKey === 'sku') {
+    const skuCatalog = catalogs.find(c => c.productIblockId > 0)
+    if (!skuCatalog) throw new BitrixError('No variations/offers catalog found.')
+    iblockId = skuCatalog.iblockId
+  } else {
+    const productCatalog = catalogs.find(c => c.productIblockId === 0)
+    iblockId = productCatalog ? productCatalog.iblockId : catalogs[0].iblockId
+  }
+
   const fieldResponse = await callMethod<Record<string, Record<string, FieldMetadata>>>(fieldsMethod, {
     filter: { iblockId }
   })
   const fields = fieldResponse[responseKey] || {}
   return {
     context,
-    title: getItemTitle(item, `${context.label} #${context.id}`),
-    fields: normalizeFields(metadataMap(fields), item)
+    title: `${context.label} Fields`,
+    fields: normalizeFields(metadataMap(fields))
   }
 }
 
-async function loadStore(context: EntityContext): Promise<ExplorerData> {
-  const [recordResponse, fieldsResponse] = await Promise.all([
-    callMethod<{ store: Record<string, unknown> }>('catalog.store.get', { id: context.id }),
-    callMethod<{ store: Record<string, FieldMetadata> }>('catalog.store.getFields')
-  ])
-  const item = recordResponse.store
+async function loadStore(context: EntityOption): Promise<ExplorerData> {
+  const fieldsResponse = await callMethod<{ store: Record<string, FieldMetadata> }>('catalog.store.getFields')
   return {
     context,
-    title: getItemTitle(item, `Warehouse #${context.id}`),
-    fields: normalizeFields(metadataMap(fieldsResponse.store), item)
+    title: 'Warehouse Fields',
+    fields: normalizeFields(metadataMap(fieldsResponse.store))
   }
 }
 
-async function loadInventoryDocument(context: EntityContext): Promise<ExplorerData> {
+async function loadInventoryDocument(context: EntityOption): Promise<ExplorerData> {
   const inventoryMode = await callMethod<string>('catalog.document.mode.status')
   if (inventoryMode !== 'Y') {
     throw new BitrixError('Inventory Management is not enabled in this Bitrix24 portal.')
   }
-  const [recordResponse, fieldsResponse, linesResponse] = await Promise.all([
-    callMethod<{ documents: Record<string, unknown>[] }>('catalog.document.list', {
-      select: [], filter: { id: context.id }, start: 0
-    }),
+  const [fieldsResponse] = await Promise.all([
     callMethod<{ document: Record<string, FieldMetadata> }>('catalog.document.getFields'),
-    callMethod<{ documentElements: Record<string, unknown>[] }>('catalog.document.element.list', {
-      select: ['id', 'docId', 'elementId', 'amount', 'purchasingPrice', 'storeFrom', 'storeTo'],
-      filter: { docId: context.id }, order: { id: 'asc' }, start: 0
-    })
+    callMethod<{ documentElement: Record<string, FieldMetadata> }>('catalog.document.element.getFields')
   ])
-  const item = recordResponse.documents?.[0]
-  if (!item) throw new BitrixError(`Inventory document #${context.id} was not found.`)
-  const itemWithLines = { ...item, documentElements: linesResponse.documentElements || [] }
+
   const fields = {
     ...metadataMap(fieldsResponse.document),
     documentElements: {
@@ -201,8 +177,8 @@ async function loadInventoryDocument(context: EntityContext): Promise<ExplorerDa
   }
   return {
     context,
-    title: getItemTitle(item, `Inventory document #${context.id}`),
-    fields: normalizeFields(fields, itemWithLines)
+    title: 'Inventory Document Fields',
+    fields: normalizeFields(fields)
   }
 }
 

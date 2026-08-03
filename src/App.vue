@@ -13,7 +13,7 @@ import RefreshIcon from '@bitrix24/b24icons-vue/outline/RefreshIcon'
 import SettingsIcon from '@bitrix24/b24icons-vue/outline/SettingsIcon'
 import { useColorMode, useToast } from '@bitrix24/b24ui-nuxt/composables'
 import type { Component } from 'vue'
-import type { FieldRow, EntityContext, EntityOption, ExplorerData } from '@/types'
+import type { FieldRow, EntityOption, ExplorerData } from '@/types'
 import { CORE_ENTITIES, EXTENDED_ENTITIES } from '@/types'
 import { createFieldsCsv, csvFilename, downloadCsv } from '@/lib/csv'
 import {
@@ -29,7 +29,6 @@ import {
 
 type LoadState = 'initializing' | 'standalone' | 'ready' | 'loading' | 'error'
 type SourceFilter = 'all' | 'custom' | 'system'
-type ValueFilter = 'all' | 'populated' | 'empty'
 type SortMode = 'custom-first' | 'label' | 'code' | 'type'
 
 const toast = useToast()
@@ -41,10 +40,8 @@ const errorMessage = ref('')
 const explorer = ref<ExplorerData | null>(null)
 const entities = ref<EntityOption[]>([...CORE_ENTITIES, ...EXTENDED_ENTITIES])
 const selectedEntityKey = ref('crm-deal')
-const lookupId = ref<number | undefined>()
 const search = ref('')
 const sourceFilter = ref<SourceFilter>('all')
-const valueFilter = ref<ValueFilter>('all')
 const typeFilter = ref('all')
 const sortMode = ref<SortMode>('custom-first')
 const detailsOpen = ref(false)
@@ -56,11 +53,6 @@ const sourceItems: Array<{ label: string; value: SourceFilter }> = [
   { label: 'All fields', value: 'all' },
   { label: 'Custom', value: 'custom' },
   { label: 'System', value: 'system' }
-]
-const valueItems = [
-  { label: 'Any value', value: 'all' },
-  { label: 'With a value', value: 'populated' },
-  { label: 'Empty', value: 'empty' }
 ]
 const sortItems = [
   { label: 'Custom first', value: 'custom-first' },
@@ -94,17 +86,6 @@ const groupedEntities = computed(() => [
 ])
 
 const selectedEntity = computed(() => entities.value.find((entity) => entity.key === selectedEntityKey.value))
-const lookupHelp = computed(() => {
-  switch (selectedEntity.value?.source) {
-    case 'activity': return 'Enter the activity ID, not the deal or contact ID.'
-    case 'catalog-product': return 'Enter the catalog product ID, not a CRM product-row ID.'
-    case 'catalog-sku': return 'Enter the parent product ID.'
-    case 'catalog-offer': return 'Enter the variation or offer ID.'
-    case 'catalog-store': return 'Enter the warehouse ID.'
-    case 'inventory-document': return 'Enter the inventory document ID.'
-    default: return 'The record ID is the number shown in its Bitrix24 URL.'
-  }
-})
 
 const typeItems = computed(() => {
   const types = [...new Set((explorer.value?.fields || []).map((field) => field.type))].sort()
@@ -114,12 +95,10 @@ const typeItems = computed(() => {
 const filteredFields = computed(() => {
   const query = search.value.trim().toLowerCase()
   const rows = (explorer.value?.fields || []).filter((field) => {
-    if (query && ![field.label, field.code, field.upperName, field.type, field.displayValue]
+    if (query && ![field.label, field.code, field.upperName, field.type]
       .some((value) => value.toLowerCase().includes(query))) return false
     if (sourceFilter.value === 'custom' && !field.custom) return false
     if (sourceFilter.value === 'system' && field.custom) return false
-    if (valueFilter.value === 'populated' && !field.populated) return false
-    if (valueFilter.value === 'empty' && field.populated) return false
     if (typeFilter.value !== 'all' && field.type !== typeFilter.value) return false
     return true
   })
@@ -136,8 +115,7 @@ const stats = computed(() => {
   const fields = explorer.value?.fields || []
   return {
     total: fields.length,
-    custom: fields.filter((field) => field.custom).length,
-    populated: fields.filter((field) => field.populated).length
+    custom: fields.filter((field) => field.custom).length
   }
 })
 
@@ -145,7 +123,6 @@ const columns = [
   { accessorKey: 'label', header: 'Field', meta: { class: { th: 'min-w-[240px]' } } },
   { accessorKey: 'code', header: 'API code', meta: { class: { th: 'min-w-[210px]' } } },
   { accessorKey: 'type', header: 'Type' },
-  { accessorKey: 'displayValue', header: 'Current value', meta: { class: { th: 'min-w-[250px]', td: 'max-w-[430px]' } } },
   { accessorKey: 'flags', header: 'Attributes', enableSorting: false },
   { accessorKey: 'actions', header: '', enableSorting: false, meta: { class: { th: 'w-12', td: 'w-12' } } }
 ]
@@ -161,10 +138,10 @@ function asMessage(error: unknown): string {
   if (error instanceof BitrixError && error.code === 'ACCESS_DENIED') {
     return "Bitrix24 denied access. Check this user's record permissions and the app scopes."
   }
-  return error instanceof Error ? error.message : 'Bitrix24 could not load this record.'
+  return error instanceof Error ? error.message : 'Bitrix24 could not load this schema.'
 }
 
-async function openContext(context: EntityContext): Promise<void> {
+async function openContext(context: EntityOption): Promise<void> {
   state.value = 'loading'
   errorMessage.value = ''
   try {
@@ -179,13 +156,9 @@ async function openContext(context: EntityContext): Promise<void> {
 }
 
 async function lookup(): Promise<void> {
-  if (!lookupId.value || lookupId.value < 1) {
-    toast.add({ title: 'Enter a valid record ID', description: 'Record IDs are positive numbers.', color: 'air-primary-alert' })
-    return
-  }
   const entity = selectedEntity.value
   if (!entity) return
-  await openContext({ ...entity, id: lookupId.value })
+  await openContext({ ...entity })
 }
 
 function returnToPicker(): void {
@@ -197,7 +170,6 @@ function returnToPicker(): void {
 function resetFilters(): void {
   search.value = ''
   sourceFilter.value = 'all'
-  valueFilter.value = 'all'
   typeFilter.value = 'all'
   sortMode.value = 'custom-first'
 }
@@ -250,15 +222,9 @@ async function resizeFrame(): Promise<void> {
 }
 
 function demoField(partial: Partial<FieldRow> & Pick<FieldRow, 'code' | 'label' | 'type'>): FieldRow {
-  const value = partial.value ?? ''
-  const rawValue = partial.rawValue ?? String(value)
   return {
     upperName: partial.code,
-    value,
-    displayValue: rawValue,
-    rawValue,
     custom: false,
-    populated: rawValue.length > 0,
     required: false,
     multiple: false,
     readOnly: false,
@@ -271,18 +237,18 @@ function demoField(partial: Partial<FieldRow> & Pick<FieldRow, 'code' | 'label' 
 
 function loadPreview(): void {
   explorer.value = {
-    context: { ...CORE_ENTITIES[0]!, id: 1842 },
-    title: 'Website redesign / Northwind',
+    context: { ...CORE_ENTITIES[0]! },
+    title: 'Deal Fields',
     fields: [
-      demoField({ code: 'UF_CRM_CLIENT_REFERENCE', label: 'Client reference', type: 'string', value: 'NW-2026-104', rawValue: 'NW-2026-104', custom: true, populated: true }),
-      demoField({ code: 'UF_CRM_PROJECT_SCOPE', label: 'Project scope', type: 'enumeration', value: ['Design', 'Development'], rawValue: '["Design", "Development"]', custom: true, populated: true, multiple: true }),
-      demoField({ code: 'UF_CRM_APPROVAL_DATE', label: 'Approval date', type: 'date', value: '2026-08-14', rawValue: '2026-08-14', custom: true, populated: true }),
+      demoField({ code: 'UF_CRM_CLIENT_REFERENCE', label: 'Client reference', type: 'string', custom: true }),
+      demoField({ code: 'UF_CRM_PROJECT_SCOPE', label: 'Project scope', type: 'enumeration', custom: true, multiple: true }),
+      demoField({ code: 'UF_CRM_APPROVAL_DATE', label: 'Approval date', type: 'date', custom: true }),
       demoField({ code: 'UF_CRM_PURCHASE_ORDER', label: 'Purchase order', type: 'file', custom: true }),
-      demoField({ code: 'TITLE', label: 'Deal name', type: 'string', value: 'Website redesign / Northwind', rawValue: 'Website redesign / Northwind', populated: true, required: true }),
-      demoField({ code: 'STAGE_ID', label: 'Stage', type: 'crm_status', value: 'Proposal sent', rawValue: 'Proposal sent', populated: true, required: true }),
-      demoField({ code: 'OPPORTUNITY', label: 'Amount', type: 'double', value: '18500.00', rawValue: '18500.00', populated: true }),
-      demoField({ code: 'CURRENCY_ID', label: 'Currency', type: 'string', value: 'USD', rawValue: 'USD', populated: true }),
-      demoField({ code: 'ASSIGNED_BY_ID', label: 'Responsible person', type: 'user', value: '47', rawValue: '47', populated: true }),
+      demoField({ code: 'TITLE', label: 'Deal name', type: 'string', required: true }),
+      demoField({ code: 'STAGE_ID', label: 'Stage', type: 'crm_status', required: true }),
+      demoField({ code: 'OPPORTUNITY', label: 'Amount', type: 'double' }),
+      demoField({ code: 'CURRENCY_ID', label: 'Currency', type: 'string' }),
+      demoField({ code: 'ASSIGNED_BY_ID', label: 'Responsible person', type: 'user' }),
       demoField({ code: 'COMMENTS', label: 'Comments', type: 'string' })
     ]
   }
@@ -319,7 +285,7 @@ onMounted(async () => {
         entity.key === context.key
         || (entity.source === 'crm' && entity.entityTypeId === context.entityTypeId)
       )
-      await openContext(matchingEntity ? { ...matchingEntity, id: context.id } : context)
+      await openContext(matchingEntity ? { ...matchingEntity } : context)
     } else {
       state.value = 'ready'
       await resizeFrame()
@@ -339,7 +305,7 @@ onMounted(async () => {
           <div class="brand-icon"><CrmSearchIcon /></div>
           <div>
             <h1>Field Explorer</h1>
-            <p>Bitrix24 record fields and API codes</p>
+            <p>Bitrix24 schema and API codes</p>
           </div>
         </div>
 
@@ -378,8 +344,8 @@ onMounted(async () => {
             <B24Badge label="Deployment ready" color="air-secondary-accent-1" />
             <h2>Open Field Explorer from Bitrix24</h2>
             <p>
-              This address hosts the app, but CRM data is only available inside your authorized
-              Bitrix24 portal. Open the local app there to choose a record or inspect a CRM tab.
+              This address hosts the app, but CRM schema is only available inside your authorized
+              Bitrix24 portal. Open the local app there to explore the schema.
             </p>
             <B24Button
               to="https://pcicrm.bitrix24.com/marketplace/"
@@ -393,7 +359,7 @@ onMounted(async () => {
           <aside class="standalone-steps">
             <div class="step-row"><span>1</span><div><strong>Open the local app</strong><p>Launch Field Explorer from Applications.</p></div></div>
             <div class="step-row"><span>2</span><div><strong>Set up CRM tabs</strong><p>Run setup once as an administrator.</p></div></div>
-            <div class="step-row"><span>3</span><div><strong>Inspect a record</strong><p>Open a CRM tab or enter a record ID.</p></div></div>
+            <div class="step-row"><span>3</span><div><strong>Explore schema</strong><p>Select an entity to view its fields.</p></div></div>
           </aside>
         </section>
 
@@ -404,8 +370,8 @@ onMounted(async () => {
         <section v-else-if="!explorer" class="picker-page">
           <div class="page-heading">
             <div>
-              <h2>Choose a record to inspect</h2>
-              <p>Select the Bitrix24 area, then enter the record ID.</p>
+              <h2>Choose an entity to inspect</h2>
+              <p>Select the Bitrix24 area to view its schema.</p>
             </div>
             <B24Badge v-if="installed" label="CRM tabs connected" color="air-secondary-accent-1" size="sm" />
           </div>
@@ -435,34 +401,30 @@ onMounted(async () => {
 
           <form class="lookup-bar" @submit.prevent="lookup">
             <div class="lookup-selection">
-              <span>Selected record type</span>
+              <span>Selected entity type</span>
               <strong>{{ selectedEntity?.label }}</strong>
             </div>
-            <B24FormField label="Record ID" :help="lookupHelp" class="lookup-field">
-              <B24Input v-model.number="lookupId" type="number" min="1" placeholder="Enter ID" size="lg" />
-            </B24FormField>
-            <B24Button type="submit" label="Open record" :trailing-icon="ArrowRightLIcon" color="air-primary" size="lg" loading-auto />
+            <B24Button type="submit" label="Explore fields" :trailing-icon="ArrowRightLIcon" color="air-primary" size="lg" loading-auto />
           </form>
         </section>
 
         <section v-else class="explorer-page">
-          <button type="button" class="back-link" @click="returnToPicker">Back to record picker</button>
+          <button type="button" class="back-link" @click="returnToPicker">Back to entity picker</button>
 
           <div class="record-header">
             <div class="record-title">
-              <div class="record-type">{{ explorer.context.label }} <span>ID {{ explorer.context.id }}</span></div>
+              <div class="record-type">{{ explorer.context.label }} <span>Schema</span></div>
               <h2>{{ explorer.title }}</h2>
             </div>
             <div class="record-summary">
               <span><strong>{{ stats.total }}</strong> fields</span>
               <span><strong>{{ stats.custom }}</strong> custom</span>
-              <span><strong>{{ stats.populated }}</strong> with values</span>
             </div>
           </div>
 
           <div class="filter-workspace">
             <div class="search-row">
-              <B24Input v-model="search" :icon="CrmSearchIcon" placeholder="Search field name, API code, type, or value" size="lg" class="field-search" rounded />
+              <B24Input v-model="search" :icon="CrmSearchIcon" placeholder="Search field name, API code, or type" size="lg" class="field-search" rounded />
               <div class="source-tabs" role="group" aria-label="Field source">
                 <B24Button
                   v-for="item in sourceItems"
@@ -478,13 +440,12 @@ onMounted(async () => {
             </div>
             <div class="secondary-filters">
               <span class="result-count">Showing {{ filteredFields.length }} of {{ stats.total }}</span>
-              <B24Select v-model="valueFilter" :items="valueItems" value-key="value" class="small-select" size="sm" />
               <B24Select v-model="typeFilter" :items="typeItems" value-key="value" class="small-select" size="sm" />
               <B24Select v-model="sortMode" :items="sortItems" value-key="value" class="sort-select" size="sm" />
             </div>
           </div>
 
-          <B24Alert v-if="state === 'error'" title="The record could not be refreshed" :description="errorMessage" color="air-primary-alert" class="mb-4" />
+          <B24Alert v-if="state === 'error'" title="The schema could not be refreshed" :description="errorMessage" color="air-primary-alert" class="mb-4" />
 
           <B24TableWrapper rounded bordered row-hover pin-rows size="md" class="field-table-wrap">
             <B24Table
@@ -510,10 +471,6 @@ onMounted(async () => {
               <template #type-cell="{ row }">
                 <B24Badge :label="row.original.type" color="air-secondary" size="xs" />
               </template>
-              <template #displayValue-cell="{ row }">
-                <div v-if="row.original.populated" class="value-preview" :title="row.original.rawValue">{{ row.original.displayValue }}</div>
-                <span v-else class="empty-value">No value</span>
-              </template>
               <template #flags-cell="{ row }">
                 <div class="flag-list">
                   <B24Badge v-if="row.original.required" label="Required" color="air-secondary-alert" size="xs" />
@@ -538,7 +495,6 @@ onMounted(async () => {
                 <B24Badge :label="field.type" color="air-secondary" size="xs" />
               </header>
               <button class="mobile-code" type="button" @click="copyText(field.code, 'API code')"><code>{{ field.code }}</code><CopyIcon /></button>
-              <div class="mobile-value" :class="{ empty: !field.populated }">{{ field.populated ? field.displayValue : 'No value' }}</div>
               <footer>
                 <div class="flag-list">
                   <B24Badge v-if="field.required" label="Required" color="air-secondary-alert" size="xs" />
@@ -564,12 +520,10 @@ onMounted(async () => {
           <B24DescriptionList :items="[
             { label: 'Original code', description: selectedField.upperName },
             { label: 'Data type', description: selectedField.type },
-            { label: 'Value', description: selectedField.populated ? 'Populated' : 'Empty' },
             { label: 'Required', description: selectedField.required ? 'Yes' : 'No' },
             { label: 'Multiple values', description: selectedField.multiple ? 'Yes' : 'No' },
             { label: 'Read only', description: selectedField.readOnly ? 'Yes' : 'No' }
           ]" />
-          <section><div class="detail-section-title">Raw value</div><pre class="raw-panel">{{ selectedField.rawValue || 'No value' }}</pre></section>
           <section v-if="Object.keys(selectedField.settings).length"><div class="detail-section-title">Field settings</div><pre class="raw-panel">{{ JSON.stringify(selectedField.settings, null, 2) }}</pre></section>
         </div>
       </template>

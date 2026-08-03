@@ -1,8 +1,7 @@
-import type { EntityContext, FieldRow } from '@/types'
+import type { EntityOption, FieldRow } from '@/types'
 
 const HEADERS = [
   'Entity type',
-  'Entity ID',
   'Field label',
   'Field code',
   'Original field code',
@@ -12,8 +11,6 @@ const HEADERS = [
   'Multiple',
   'Read only',
   'Immutable',
-  'Value state',
-  'Value',
   'Field settings'
 ]
 
@@ -26,10 +23,9 @@ function csvCell(value: unknown): string {
   return `"${safe.replace(/"/g, '""')}"`
 }
 
-export function createFieldsCsv(rows: FieldRow[], context: EntityContext): string {
+export function createFieldsCsv(rows: FieldRow[], context: EntityOption): string {
   const dataRows = rows.map((row) => [
     context.label,
-    context.id,
     row.label,
     row.code,
     row.upperName,
@@ -39,18 +35,16 @@ export function createFieldsCsv(rows: FieldRow[], context: EntityContext): strin
     row.multiple ? 'Yes' : 'No',
     row.readOnly ? 'Yes' : 'No',
     row.immutable ? 'Yes' : 'No',
-    row.populated ? 'Populated' : 'Empty',
-    row.rawValue,
     Object.keys(row.settings).length ? JSON.stringify(row.settings) : ''
   ])
 
   return `\uFEFF${[HEADERS, ...dataRows].map((row) => row.map(csvCell).join(',')).join('\r\n')}`
 }
 
-export function csvFilename(context: EntityContext, date = new Date()): string {
+export function csvFilename(context: EntityOption, date = new Date()): string {
   const stamp = date.toISOString().slice(0, 10)
   const entity = context.label.toLowerCase().replace(/[^a-z0-9]+/g, '-')
-  return `bitrix24-${entity}-${context.id}-fields-${stamp}.csv`
+  return `bitrix24-${entity}-fields-${stamp}.csv`
 }
 
 export function downloadCsv(csv: string, filename: string): void {

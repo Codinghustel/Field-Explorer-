@@ -17,10 +17,6 @@ export interface EntityOption {
   dynamic?: boolean
 }
 
-export interface EntityContext extends EntityOption {
-  id: number
-}
-
 export interface FieldMetadata {
   title?: string
   type?: string
@@ -40,11 +36,7 @@ export interface FieldRow {
   upperName: string
   label: string
   type: string
-  value: unknown
-  displayValue: string
-  rawValue: string
   custom: boolean
-  populated: boolean
   required: boolean
   multiple: boolean
   readOnly: boolean
@@ -54,7 +46,7 @@ export interface FieldRow {
 }
 
 export interface ExplorerData {
-  context: EntityContext
+  context: EntityOption
   title: string
   fields: FieldRow[]
 }
