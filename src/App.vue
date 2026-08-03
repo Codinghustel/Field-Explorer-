@@ -246,7 +246,7 @@ async function registerTabs(): Promise<void> {
 
 async function resizeFrame(): Promise<void> {
   await nextTick()
-  window.BX24?.resizeWindow?.('100%', Math.max(document.documentElement.scrollHeight, 720))
+  window.BX24?.resizeWindow?.(document.body.clientWidth, Math.max(document.documentElement.scrollHeight, 720))
 }
 
 function demoField(partial: Partial<FieldRow> & Pick<FieldRow, 'code' | 'label' | 'type'>): FieldRow {
