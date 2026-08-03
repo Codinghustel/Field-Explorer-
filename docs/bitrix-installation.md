@@ -20,9 +20,9 @@ Production values:
 3. Set the application URL and initial installation URL to `https://field-explorer.premierchoiceint.online/`.
 4. Grant the `crm`, `placement`, and `catalog` scopes.
 5. Save and open the application as an administrator.
-6. Select **Register CRM tabs**.
+6. Select **Set up CRM tabs** (or **Register CRM tabs**).
 
-Field Explorer asks Bitrix24 for the placements available to the portal, registers the four core CRM detail tabs, and registers available smart-process detail tabs. A fresh installation calls `BX24.installFinish()` only after all placement registrations succeed.
+Field Explorer queries Bitrix24 for the placements available to the portal, registers the four core CRM detail tabs, and registers available smart-process detail tabs. A fresh installation calls `BX24.installFinish()` once placement registrations complete.
 
 ## Registered placements
 
@@ -36,7 +36,7 @@ Field Explorer asks Bitrix24 for the placements available to the portal, registe
 
 Smart-process placement codes are validated against `placement.list` before registration.
 
-Products, warehouses, and inventory documents do not currently have documented Bitrix24 detail-tab placements. Open those explorers from the application launcher and select the record type and numeric ID.
+Products, warehouses, and inventory documents do not currently have documented Bitrix24 detail-tab placements. Open those schema explorers directly from the Application Launcher by selecting the entity type.
 
 ## Inventory prerequisites
 
@@ -44,13 +44,13 @@ Inventory exploration requires Inventory Management on the portal's plan and ena
 
 ## Updating tabs
 
-Run **Register CRM tabs** again after creating a new smart process. Existing bindings are updated and newly available dynamic placements are added.
+Run **Set up CRM tabs** again after creating a new smart process. Existing bindings are updated and newly available dynamic placements are registered.
 
 ## Troubleshooting
 
 ### The SDK does not initialize
 
-Open the application from Bitrix24 rather than directly from its public URL. Confirm that the SDK script from `https://api.bitrix24.com/api/v1/` is not blocked by proxy or content-security policies.
+Open the application from inside Bitrix24 rather than directly from its public URL. Confirm that the SDK script from `https://api.bitrix24.com/api/v1/` is not blocked by proxy or content-security policies.
 
 ### Access denied
 
@@ -60,7 +60,7 @@ For products or inventory, confirm the app has the `catalog` scope and the curre
 
 ### The tab does not appear
 
-Open the app as an administrator, run **Register CRM tabs**, and verify the app installation completed. Confirm the public handler is HTTPS and can be framed by the portal.
+Open the app as an administrator, run **Set up CRM tabs**, and verify the app installation completed. Confirm the public handler is HTTPS and can be framed by the portal.
 
 ### A custom Bitrix domain cannot frame the app
 
