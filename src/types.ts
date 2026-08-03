@@ -43,6 +43,12 @@ export interface FieldRow {
   immutable: boolean
   deprecated: boolean
   settings: Record<string, unknown>
+  userfieldId?: number
+  sort?: number
+  showFilter?: string
+  showInList?: string
+  editFormLabel?: Record<string, string>
+  enumOptions?: Array<{ id?: string; value: string; sort?: number; def?: string; del?: boolean }>
 }
 
 export interface ExplorerData {

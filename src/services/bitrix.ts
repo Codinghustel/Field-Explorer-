@@ -89,6 +89,23 @@ interface TypeListResponse {
   types: Array<{ entityTypeId: number; title: string }>
 }
 
+export async function getCustomFieldsConfigMap(): Promise<Record<string, any>> {
+  try {
+    const res = await callMethod<{ fields: Array<any> }>('userfieldconfig.list', { moduleId: 'crm' })
+    const map: Record<string, any> = {}
+    if (res && res.fields) {
+      for (const f of res.fields) {
+        if (f.fieldName) {
+          map[f.fieldName] = f
+        }
+      }
+    }
+    return map
+  } catch {
+    return {}
+  }
+}
+
 export async function loadExplorer(context: EntityOption): Promise<ExplorerData> {
   if (context.source === 'activity') return loadActivity(context)
   if (context.source === 'catalog-product') return loadCatalogSchema(context, 'catalog.product.getFieldsByFilter', 'product')
@@ -99,13 +116,83 @@ export async function loadExplorer(context: EntityOption): Promise<ExplorerData>
   if (!context.entityTypeId) throw new BitrixError('The CRM entity type is missing.')
 
   const params = { entityTypeId: context.entityTypeId, useOriginalUfNames: 'Y' }
-  const fieldData = await callMethod<ItemFieldsResponse>('crm.item.fields', params)
+  const [fieldData, customConfigs] = await Promise.all([
+    callMethod<ItemFieldsResponse>('crm.item.fields', params),
+    getCustomFieldsConfigMap()
+  ])
 
   return {
     context,
     title: `${context.label} Fields`,
-    fields: normalizeFields(fieldData.fields)
+    fields: normalizeFields(fieldData.fields, customConfigs)
   }
+}
+
+export interface UpdateCustomFieldData {
+  id?: number | string
+  code?: string
+  label?: string
+  mandatory?: 'Y' | 'N'
+  sort?: number
+  showFilter?: 'Y' | 'N'
+  showInList?: 'Y' | 'N'
+  enumOptions?: Array<{ id?: string; value: string; sort?: number; def?: string; del?: boolean }>
+}
+
+export async function updateCustomField(data: UpdateCustomFieldData): Promise<void> {
+  let targetId = data.id ? Number(data.id) : undefined
+
+  if (!targetId && data.code) {
+    try {
+      const fieldCode = data.code
+      const listRes = await callMethod<{ fields: Array<{ id: string; fieldName: string }> }>('userfieldconfig.list', {
+        moduleId: 'crm'
+      })
+      const found = listRes.fields?.find((f) => f.fieldName === fieldCode || f.fieldName === fieldCode.toUpperCase())
+      if (found) {
+        targetId = Number(found.id)
+      }
+    } catch {
+      // ignore list error
+    }
+  }
+
+  if (!targetId) {
+    throw new BitrixError('Could not find the custom field configuration ID to update.')
+  }
+
+  const fieldObj: Record<string, unknown> = {}
+  if (data.label !== undefined) {
+    fieldObj.editFormLabel = { en: data.label }
+  }
+  if (data.mandatory !== undefined) {
+    fieldObj.mandatory = data.mandatory
+  }
+  if (data.sort !== undefined) {
+    fieldObj.sort = data.sort
+  }
+  if (data.showFilter !== undefined) {
+    fieldObj.showFilter = data.showFilter
+  }
+  if (data.showInList !== undefined) {
+    fieldObj.showInList = data.showInList
+  }
+  if (data.enumOptions && data.enumOptions.length > 0) {
+    fieldObj.userTypeId = 'enumeration'
+    fieldObj.enum = data.enumOptions.map((opt) => ({
+      id: opt.id,
+      value: opt.value,
+      sort: opt.sort ?? 100,
+      def: opt.def || 'N',
+      del: opt.del ? 'Y' : 'N'
+    }))
+  }
+
+  await callMethod('userfieldconfig.update', {
+    moduleId: 'crm',
+    id: targetId,
+    field: fieldObj
+  })
 }
 
 function metadataMap(fields: Record<string, FieldMetadata>): Record<string, FieldMetadata> {
